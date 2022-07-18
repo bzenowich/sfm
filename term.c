@@ -24,6 +24,16 @@ Term oterm;
 Term nterm;
 struct abuf ab = { NULL, 0 };
 
+/* function declarations */
+static void set_term(void);
+static void reset_term(void);
+static int get_term_size(int *, int *);
+static void backup_term(void);
+static void ab_append(const char *, int);
+static void ab_free(void);
+static void ab_write(void);
+static void move_to_col(int);
+
 /* function implementations */
 Term*
 init_term()
@@ -90,6 +100,21 @@ getkey()
 	return c;
 }
 
+void
+twrite(int x, int y, char *str, size_t len, Cpair col)
+{
+	if (x > nterm.cols || y > nterm.rows)
+		return;
+	char buf[nterm.cols];
+	size_t buflen;
+
+	snprintf(buf, nterm.cols,
+		"\x1b[%d;%df\x1b[%d;48;5;%d;38;5;%dm%s\x1b[0;0m",
+		y, x, col.attr, col.bg, col.fg, str);
+	buflen = strlen(buf);
+	write(STDOUT_FILENO, buf, buflen);
+}
+
 // ============================================================================
 // static - local functions
 // ============================================================================
@@ -103,7 +128,7 @@ set_term(void) {
 	nterm.cy = 0;
 	if (get_term_size(&nterm.rows, &nterm.cols) == -1)
 		die("getWindowSize");
-	nterm.avail_cols = (nterm.cols - 4 ) / 2;
+	nterm.avail_cols = (nterm.cols - 6 ) / 2;
 	nterm.term.c_oflag &= ~OPOST;
 	nterm.term.c_lflag &= ~(ECHO | ICANON);
 
@@ -183,9 +208,9 @@ ab_write(void)
 static void
 move_to_col(int y)
 {
-	char buf[8]; /* max 5 digits */
+	char buf[16];
 	size_t buflen;
-	snprintf(buf, 8, "\x1b[%dG", y);
+	snprintf(buf, 16, "\x1b[%dG", y);
 	buflen = strlen(buf);
 	ab_append(buf, buflen);
 	//write(STDOUT_FILENO, buf, buflen);
@@ -217,21 +242,6 @@ move_to_col(int y)
 //	//	die("tcsetattr");
 //}
 
-//void
-//twrite(int x, int y, char *str, size_t len, Cpair col)
-//{
-//	if (x > oterm.cols || y > oterm.rows)
-//		return;
-//	char buf[oterm.cols];
-//	size_t full_buf;
-//
-//	snprintf(buf, oterm.cols,
-//		"\x1b[%d;%df\x1b[%d;48;5;%d;38;5;%dm%s\x1b[0;0m",
-//		y, x, col.attr, col.bg, col.fg, str);
-//	full_buf = strlen(buf);
-//	write(STDOUT_FILENO, buf, full_buf);
-//}
-//
 //void
 //tprintf(int x, int y, Cpair col, const char *fmt, ...)
 //{

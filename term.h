@@ -40,13 +40,6 @@ Term* init_term(void);
 void quit_term(void);
 void draw_frame(void);
 char getkey(void);
-static void set_term(void);
-static void reset_term(void);
-static int get_term_size(int *, int *);
-static void backup_term(void);
-static void ab_append(const char *, int);
-static void ab_free(void);
-static void ab_write(void);
-static void move_to_col(int);
+void twrite(int, int, char *, size_t, Cpair);
 
 #endif /* TERM_H */
