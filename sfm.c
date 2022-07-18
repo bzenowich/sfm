@@ -684,7 +684,7 @@ quit()
 	//CURSOR_SHOW
 	//free(panes[Left].direntr);
 	//free(panes[Right].direntr);
-	reset_term();
+	quit_term();
 	exit(0);
 }
 
@@ -745,7 +745,7 @@ void
 start(void)
 {
 	term = init_term();
-	//draw_frame();
+	draw_frame();
 	//set_panes();
 	//get_editor();
 	//get_shell();

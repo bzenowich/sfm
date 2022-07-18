@@ -15,50 +15,84 @@
 #include <stdint.h>
 
 #include "term.h"
+#include "util.h"
 #include "config.h"
 #include "utf8.h"
-#include "util.h"
 
-/* macros */
-/* typedef */
-/* function declarations */
 /* global variables */
-static Term oterm;
-static Term nterm;
+Term oterm;
+Term nterm;
+struct abuf ab = { NULL, 0 };
 
 /* function implementations */
-
-//void
-//die(const char *s)
-//{
-//	CLEAR_SCREEN
-//	perror(s);
-//	exit(1);
-//}
-
-static void
-backup_term(void) {
-	if (tcgetattr(STDIN_FILENO, &oterm.term) < 0)
-		die("tcgetattr");
-}
-
-//void
-//disableRawMode()
-//{
-//	if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &oterm.term) == -1)
-//		die("tcsetattr");
-//}
-
-static int
-get_term_size(int *rows, int *cols)
+Term*
+init_term()
 {
-	struct winsize ws;
-	if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)
-		return -1;
-	*cols = ws.ws_col;
-	*rows = ws.ws_row;
-	return 0;
+	backup_term();
+	set_term();
+	//raw_mode();
+	//CLEAR_SCREEN
+	//CURSOR_HIDE
+	return &nterm;
 }
+
+void
+quit_term(void)
+{
+	reset_term();
+}
+
+void
+draw_frame(void)
+{
+	int y;
+	char buf[64];
+	size_t buflen;
+
+	snprintf(buf, nterm.cols, "\x1b[%d;48;5;%d;38;5;%dm%s\x1b[0;0m",
+		cframe.attr, cframe.bg, cframe.fg, "  ");
+	buflen= strnlen(buf, 64);
+
+	ab_free();
+	for (y = 0; y < nterm.cols ; y++) {
+		ab_append(buf, buflen);
+	}
+
+	for (y = 0; y < nterm.rows - 1; y++) {
+		ab_append(buf, buflen);
+		move_to_col(nterm.cols/2);
+		ab_append(buf, buflen);
+		move_to_col(nterm.cols - 1);
+		ab_append(buf, buflen);
+		if (y < nterm.rows - 1) {
+			ab_append("\r\n", 2);
+		}
+	}
+
+	for (y = 0; y < nterm.cols; y++) {
+		ab_append(buf, buflen);
+	}
+
+	ab_write();
+	write(STDOUT_FILENO, "\x1b[0;0m", 6);
+
+}
+
+char
+getkey()
+{
+	int nread;
+	char c;
+	while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+		if (nread == -1 && errno != EAGAIN)
+			die("read");
+	}
+	return c;
+}
+
+// ============================================================================
+// static - local functions
+// ============================================================================
 
 static void
 set_term(void) {
@@ -76,54 +110,93 @@ set_term(void) {
 	if (tcsetattr(STDIN_FILENO, TCSANOW, &nterm.term) < 0)
 		die("tcsetattr");
 
-	printf(
-			"\033[?1049h" // use alternative screen buffer
-			"\033[?7l"    // disable line wrapping
-			"\033[?25l"   // hide cursor
-			"\033[2J"     // clear screen
-			"\033[2;%dr", // limit scrolling to our rows
-			nterm.rows-1);
-	fflush(stdout);
-
-	char buf[] = "this is a test";
-	size_t buflen = strlen(buf);
-	write(STDOUT_FILENO, buf, buflen);
+		//"\033[H"      // go home
+	write(STDOUT_FILENO,
+		"\033[?1049h" // use alternative screen buffer
+		"\033[?7l"    // disable line wrapping
+		"\033[?25l"   // hide cursor
+		"\033[2J"     // clear screen
+	//	"\033[2;%dr", // limit scrolling to our rows
+		, 24);
 }
 
-void
+static void
 reset_term(void) {
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &oterm.term) < 0) {
 		perror("tcsetattr");
 		return;
 	}
-
-	//write(STDOUT_FILENO, buf, full_buf);
-
-	printf(
-			"\033[?7h"    // enable line wrapping
-			"\033[?25h"   // unhide cursor
-			"\033[r"     // reset scroll region
-			"\033[?1049l" // restore main screen
-	);
-
-	fflush(stdout);
+	write(STDOUT_FILENO,
+		"\033[?7h"
+		"\033[?25h"
+		"\033[r"
+		"\033[?1049l", 23);
 }
 
-Term*
-init_term()
+static int
+get_term_size(int *rows, int *cols)
 {
-	backup_term();
-	set_term();
-
-
-	//raw_mode();
-	//CLEAR_SCREEN
-	//CURSOR_HIDE
-
-	return &nterm;
+	struct winsize ws;
+	if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)
+		return -1;
+	*cols = ws.ws_col;
+	*rows = ws.ws_row;
+	return 0;
 }
 
+static void
+backup_term(void) {
+	if (tcgetattr(STDIN_FILENO, &oterm.term) < 0)
+		die("tcgetattr");
+}
+
+// ============================================================================
+// Buffer
+// ============================================================================
+
+static void
+ab_append(const char *s, int len)
+{
+	char *new = realloc(ab.b, ab.len + len);
+	if (new == NULL)
+		return;
+	memcpy(&new[ab.len], s, len);
+	ab.b = new;
+	ab.len += len;
+}
+
+static void
+ab_free(void)
+{
+	free(ab.b);
+	//ab.b= NULL;
+}
+
+static void
+ab_write(void)
+{
+	write(STDOUT_FILENO, ab.b, ab.len);
+	ab_free();
+}
+
+static void
+move_to_col(int y)
+{
+	char buf[8]; /* max 5 digits */
+	size_t buflen;
+	snprintf(buf, 8, "\x1b[%dG", y);
+	buflen = strlen(buf);
+	ab_append(buf, buflen);
+	//write(STDOUT_FILENO, buf, buflen);
+}
+
+//void
+//disableRawMode()
+//{
+//	if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &oterm.term) == -1)
+//		die("tcsetattr");
+//}
 
 //void
 //raw_mode()
@@ -143,8 +216,6 @@ init_term()
 //	//if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1)
 //	//	die("tcsetattr");
 //}
-
-
 
 //void
 //twrite(int x, int y, char *str, size_t len, Cpair col)
@@ -211,133 +282,18 @@ init_term()
 //    //        rows);
 //}
 //
-//void
-//move_to_col(int y)
-//{
-//	char buf[8];
-//	size_t full_buf;
-//	snprintf(buf, 8, "\x1b[%dG", y);
-//	full_buf = strlen(buf);
-//	write(STDOUT_FILENO, buf, full_buf);
-//}
-//
-//void
-//draw_frame()
-//{
-//	setvbuf(stdout, NULL, _IOFBF, 0);
-//
-//	//int y;
-//	//char str[4];
-//	//size_t str_len;
-//	//Rune d = 0x2588;
-//
-//	//str_len = utf8encode(d, str);
-//	//char str[] = "X";
-//	//str_len = 2;
-//
-//	// TODO move_to_col
-//	//char buf[32];
-//	//size_t full_buf;
-//
-//
-//	//snprintf(buf, oterm.cols,
-//	//	"\x1b[%d;48;5;%d;38;5;%dm%s\x1b[0;0m",
-//	//	cstatus.attr, cframe.bg, cframe.fg, str);
-//	//full_buf = strlen(buf);
-//	//write(STDOUT_FILENO, buf, full_buf);
-//	//
-//	//for (y = 0; y < oterm.cols ; y++) {
-//	//	write(STDOUT_FILENO, buf, full_buf);
-//	//}
-//
-//	//for (y = 1; y < oterm.rows - 2; y++) {
-//	//	write(STDOUT_FILENO, str, str_len);
-//	//	move_to_col(oterm.cols/2);
-//	//	write(STDOUT_FILENO, str, str_len);
-//	//	write(STDOUT_FILENO, str, str_len);
-//	//	move_to_col(oterm.cols);
-//	//	write(STDOUT_FILENO, str, str_len);
-//	//	if (y < oterm.rows - 3) {
-//	//		write(STDOUT_FILENO, "\r\n", 2);
-//	//	}
-//	//}
-//	//for (y = 0; y < oterm.cols; y++) {
-//	//	write(STDOUT_FILENO, str, str_len);
-//	//}
-//	//for (y = 0; y < oterm.cols; y++) {
-//	//	write(STDOUT_FILENO, str, str_len);
-//	//}
-//	//write(STDOUT_FILENO, "\x1b[0;0m", 6);
-//}
 
-char
-getkey()
-{
-	int nread;
-	char c;
-	while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
-		if (nread == -1 && errno != EAGAIN)
-			die("read");
-	}
-	return c;
-}
-
-////void
-////abAppend(struct abuf *ab, const char *s, int len)
-////{
-////	char *new = realloc(ab->b, ab->len + len);
-////	if (new == NULL)
-////		return;
-////	memcpy(&new[ab->len], s, len);
-////	ab->b = new;
-////	ab->len += len;
-////}
-////void
-////abFree(struct abuf *ab)
-////{
-////	free(ab->b);
-////}
-//
-////void
-////editorDrawRows(struct abuf *ab)
-////{
-////	int y;
-////	for (y = 0; y < term.rows; y++) {
-////		if (y == term.rows / 3) {
-////			char welcome[80];
-////			int welcomelen = snprintf(welcome, sizeof(welcome),
-////				"Kilo editor -- version nasmfm");
-////			if (welcomelen > term.cols)
-////				welcomelen = term.cols;
-////			int padding = (term.cols - welcomelen) / 2;
-////			if (padding) {
-////				abAppend(ab, "~", 1);
-////				padding--;
-////			}
-////			while (padding--)
-////				abAppend(ab, " ", 1);
-////			abAppend(ab, welcome, welcomelen);
-////		} else {
-////			abAppend(ab, "~", 1);
-////		}
-////		abAppend(ab, "\x1b[K", 3);
-////		if (y < term.rows - 1) {
-////			abAppend(ab, "\r\n", 2);
-////		}
-////	}
-////}
-//
 ////void
 ////editorRefreshScreen()
 ////{
 ////	struct abuf ab = { NULL, 0 };
-////	abAppend(&ab, "\x1b[?25l", 6);
-////	abAppend(&ab, "\x1b[H", 3);
+////	ab_append("\x1b[?25l", 6);
+////	ab_append("\x1b[H", 3);
 ////	editorDrawRows(&ab);
 ////	char buf[32];
 ////	snprintf(buf, sizeof(buf), "\x1b[%d;%dH", term.cy + 1, term.cx + 1);
-////	abAppend(&ab, buf, strlen(buf));
-////	abAppend(&ab, "\x1b[?25h", 6);
+////	ab_append(buf, strlen(buf));
+////	ab_append("\x1b[?25h", 6);
 ////	write(STDOUT_FILENO, ab.b, ab.len);
 ////	abFree(&ab);
 ////}
